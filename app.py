@@ -1,75 +1,67 @@
-"""Minimal Flask application setup for the SQLAlchemy assignment."""
-from flask import Flask, jsonify, request
-from flask_migrate import Migrate
-from flask_sqlalchemy import SQLAlchemy
-
-from config import Config
-
-# These extension instances are shared across the app and models
-# so that SQLAlchemy can bind to the application context when the
-# factory runs.
-db = SQLAlchemy()
-migrate = Migrate()
-
+# Fichier : app.py
+from flask import Flask, request, jsonify
+from models import db, User, Post
 
 def create_app(test_config=None):
-    """Application factory used by Flask and the tests.
-
-    The optional ``test_config`` dictionary can override settings such as
-    the database URL to keep student tests isolated.
-    """
-
     app = Flask(__name__)
-    app.config.from_object(Config)
-    if test_config:
-        app.config.update(test_config)
+    
+    if test_config is None:
+        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///blog.db'
+        app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    else:
+        app.config.from_mapping(test_config)
 
     db.init_app(app)
-    migrate.init_app(app, db)
 
-    # Import models here so SQLAlchemy is aware of them before migrations
-    # or ``create_all`` run. Students will flesh these out in ``models.py``.
-    import models  # noqa: F401
+    with app.app_context():
+        db.create_all()
 
-    @app.route("/")
-    def index():
-        """Simple sanity check route."""
+    @app.route('/users', methods=['GET'])
+    def get_users():
+        users = User.query.all()
+        users_list = [{'id': user.id, 'username': user.username} for user in users]
+        return jsonify(users_list), 200
 
-        return jsonify({"message": "Welcome to the Flask + SQLAlchemy assignment"})
+    @app.route('/users', methods=['POST'])
+    def create_user():
+        data = request.get_json()
+        new_user = User(username=data['username'])
+        db.session.add(new_user)
+        db.session.commit()
+        return jsonify({'id': new_user.id, 'username': new_user.username}), 201
 
-    @app.route("/users", methods=["GET", "POST"])
-    def users():
-        """List or create users.
+    @app.route('/posts', methods=['GET'])
+    def get_posts():
+        posts = Post.query.all()
+        posts_list = []
+        for post in posts:
+            posts_list.append({
+                'id': post.id,
+                'title': post.title,
+                'content': post.content,
+                # === CORRECTION 1 : On ajoute le username directement comme attendu par le test ===
+                'username': post.user.username 
+            })
+        return jsonify(posts_list), 200
 
-        TODO: Students should query ``User`` objects, serialize them to JSON,
-        and handle incoming POST data to create new users.
-        """
+    @app.route('/posts', methods=['POST'])
+    def create_post():
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        # On utilise db.session.get() qui est la méthode moderne
+        user = db.session.get(User, user_id)
+        if not user:
+            # === CORRECTION 2 : On retourne 400 comme attendu par le test ===
+            return jsonify({'error': 'User not found'}), 400
 
-        return (
-            jsonify({"message": "TODO: implement user listing/creation"}),
-            501,
-        )
-
-    @app.route("/posts", methods=["GET", "POST"])
-    def posts():
-        """List or create posts.
-
-        TODO: Students should query ``Post`` objects, include user data, and
-        allow creating posts tied to a valid ``user_id``.
-        """
-
-        return (
-            jsonify({"message": "TODO: implement post listing/creation"}),
-            501,
-        )
-
+        new_post = Post(title=data['title'], content=data['content'], user_id=user_id)
+        db.session.add(new_post)
+        db.session.commit()
+        return jsonify({'id': new_post.id, 'title': new_post.title}), 201
+    
     return app
 
-
-# Expose a module-level application for convenience with certain tools
-app = create_app()
-
-
-if __name__ == "__main__":
-    # Running ``python app.py`` starts the development server.
+if __name__ == '__main__':
+    app = create_app()
     app.run(debug=True)
